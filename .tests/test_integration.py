@@ -31,10 +31,15 @@ def test_dry_run_full_flow(tmp_path):
     
     # 4. Run the script in a subprocess
     # We use -m to run as a module if possible, or just call the script
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["CI_MODE"] = "true"
     result = subprocess.run(
         [sys.executable, "main.py", "--system", "DT", "--limit", "1", "--yes"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=env,
     )
     
     assert result.returncode == 0

@@ -165,6 +165,7 @@ class ExcelProcessor:
         stats["total_excel_rows"] = len(df)
         
         raw_cols = [str(c).strip().lower() for c in df.columns]
+        original_cols = [str(c).strip() for c in df.columns]
         
         def find_col(aliases):
             for a in aliases:
@@ -178,7 +179,10 @@ class ExcelProcessor:
             "part": find_col(["part", "part name", "designation"]),
             "quantity": find_col(["part_quantity", "quantity", "qty", "amount"]),
             "makebuy": find_col(["make o. buy", "m/b", "makebuy"]),
-            "comments": find_col(["part_comments", "comments", "notes", "comment"])
+            "comments": find_col(["part_comments", "comments", "notes", "comment"]),
+            "custom_id": find_col(["customid", "custom_id", "custom id"]),
+            "costs": find_col(["cost", "costs"]),
+            "emissions": find_col(["emission", "emissions"]),
         }
 
         if col_map["system"] is None or col_map["part"] is None:
@@ -232,20 +236,31 @@ class ExcelProcessor:
             qty_val = str(row.iloc[col_map["quantity"]] if col_map["quantity"] is not None else "").strip()
             mb_val = str(row.iloc[col_map["makebuy"]] if col_map["makebuy"] is not None else "m").strip().lower()[:1] or "m"
             comm_val = str(row.iloc[col_map["comments"]] if col_map["comments"] is not None else "").strip().replace("nan", "")
+            custom_id_val = str(row.iloc[col_map["custom_id"]] if col_map["custom_id"] is not None else "").strip().replace("nan", "")
+            cost_val = str(row.iloc[col_map["costs"]] if col_map["costs"] is not None else "").strip().replace("nan", "")
+            emission_val = str(row.iloc[col_map["emissions"]] if col_map["emissions"] is not None else "").strip().replace("nan", "")
+
 
             # --- Validation: Part Name (Max 25) ---
             if len(part_val) > 25:
-                res = self._handle_long_field(filepath, part_val, 25, "Part Name", excel_row, auto_confirm)
+                res = self._handle_long_field(filepath, part_val, 25, "Part Name", excel_row, auto_confirm, col_name=original_cols[col_map["part"]])
                 if res is None: # Skip
                     continue
                 part_val = res
 
             # --- Validation: Comment (Max 40) ---
             if len(comm_val) > 40:
-                res = self._handle_long_field(filepath, comm_val, 40, "Comment", excel_row, auto_confirm)
+                res = self._handle_long_field(filepath, comm_val, 40, "Comment", excel_row, auto_confirm, col_name=original_cols[col_map["comments"]])
                 if res is None: # Skip
                     continue
                 comm_val = res
+
+            # --- Validation: Emissions (Max 40, matches the site's input maxlength) ---
+            if col_map["emissions"] is not None and len(emission_val) > 40:
+                res = self._handle_long_field(filepath, emission_val, 40, "Emissions", excel_row, auto_confirm, col_name=original_cols[col_map["emissions"]])
+                if res is None: # Skip
+                    continue
+                emission_val = res
 
             filtered.append({
                 "row": excel_row,
@@ -255,12 +270,15 @@ class ExcelProcessor:
                 "makebuy": mb_val,
                 "quantity": qty_val,
                 "comments": comm_val,
+                "custom_id": custom_id_val,
+                "costs": cost_val,
+                "emissions": emission_val,
             })
             stats["valid_parts"] += 1
 
         return filtered, stats
 
-    def _handle_long_field(self, filepath: str, value: str, limit: int, field_name: str, row: int, auto_confirm: bool) -> str | None:
+    def _handle_long_field(self, filepath: str, value: str, limit: int, field_name: str, row: int, auto_confirm: bool, col_name: str) -> str | None:
         """Helper to handle long text fields interactively or automatically."""
         if auto_confirm:
             if self.ui:
@@ -276,7 +294,7 @@ class ExcelProcessor:
             console.print(f"\n[bold yellow][!] {field_name} too long at row {row}[/]")
             color = "red" if len(value) > limit else "green"
             console.print(f"Current: [italic]{value}[/] ([{color}]{len(value)}[white]/{limit} chars)")
-            
+
             choice = questionary.select(
                 f"How would you like to handle this {field_name.lower()}?",
                 choices=[
@@ -285,8 +303,6 @@ class ExcelProcessor:
                     "Skip row - do NOT upload"
                 ]
             ).ask()
-
-            col_name = "part" if field_name == "Part Name" else "part_comments"
 
             if choice == "Edit (with pre-fill)":
                 def validate_len(text):

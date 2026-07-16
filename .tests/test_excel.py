@@ -36,3 +36,16 @@ def test_filter_rows_by_system(sample_excel):
     rows, stats = processor.process_file(sample_excel, run_system="BR")
     assert len(rows) == 1
     assert rows[0]["system"] == "BR"
+
+
+def test_generic_id_column_is_not_treated_as_custom_id(tmp_path):
+    path = tmp_path / "generic_id.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["System", "Assembly", "Part", "ID"])
+    ws.append(["DT", "Gearbox", "Sun Gear", "internal-row-17"])
+    wb.save(path)
+
+    rows, _ = ExcelProcessor("BOMs").process_file(str(path), run_system="DT")
+
+    assert rows[0]["custom_id"] == ""

@@ -33,7 +33,6 @@ class BOMAutomation:
             
         filepath = None
         if self.config.target_file:
-            # Try to match by basename or full path
             for f in files:
                 if os.path.basename(f) == self.config.target_file or f == self.config.target_file:
                     filepath = f
@@ -51,7 +50,6 @@ class BOMAutomation:
             filepath = next(f for f in files if os.path.basename(f) == selection)
 
         # 2. System Selection
-        # Get all possible systems from the configuration
         all_systems = sorted(self.matcher.SYSTEM_MAP.keys())
         
         run_system = self.config.default_system
@@ -69,7 +67,6 @@ class BOMAutomation:
         # 3. Filter Rows
         parts, stats = self.excel.process_file(filepath, run_system, matcher=self.matcher, auto_confirm=self.config.auto_confirm)
         
-        # Detailed logging of Excel scan
         self.ui.log(f"Excel Scan Summary for '{os.path.basename(filepath)}':")
         self.ui.log(f"  • Total rows found:     {stats['total_excel_rows']}")
         self.ui.log(f"  • Empty/Invalid rows:   {stats['empty_rows']}")
@@ -99,7 +96,6 @@ class BOMAutomation:
                 if not self.config.auto_confirm:
                     self.ui.console.input("\nPress ENTER when ready on BOM page...")
                 
-                # Fetch Options & Match Assemblies
                 sys_label = self.matcher.get_system_label(run_system)
                 site_options = browser.fetch_site_options(sys_label)
                 
@@ -107,7 +103,6 @@ class BOMAutomation:
                     self.ui.log("Could not fetch site options from the server.", "ERROR")
                     return
 
-                # Match and Whitelist
                 runtime_allowed = []
                 if not self.config.allowed_assemblies:
                     if not self.config.auto_confirm:
@@ -116,7 +111,6 @@ class BOMAutomation:
                             self.ui.log("No assemblies selected. Exiting.")
                             return
                     else:
-                        # Auto mode: process everything fetched
                         runtime_allowed = site_options
                 
                 matched_parts = []
@@ -150,15 +144,27 @@ class BOMAutomation:
                 existing = browser.scrape_existing_parts(self.matcher)
                 self.ui.log(f"Found {len(existing)} existing parts on the website.")
 
+                # Indexierung der bereits vergebenen CustomIDs (Verhindert doppelte Uploads bei existierender CustomID)
+                existing_custom_ids = {v.get('custom_id').strip() for v in existing.values() if v.get('custom_id')}
+
                 # 5. Upload Loop
                 start_time = time.time()
                 live, status_table, progress, task_id = self.ui.create_dashboard(len(matched_parts))
                 
                 with live:
                     for i, part in enumerate(matched_parts):
-                        # Canonical key match
-                        # To handle site-wide inconsistencies (where site system code differs from Excel),
-                        # we compare primarily based on assembly and part name.
+                        part_custom_id = part.get('custom_id', '').strip()
+
+                        # 1. Deduplizierung über CustomID
+                        if part_custom_id and part_custom_id in existing_custom_ids:
+                            status_table.add_row(str(part['row']), part['part'], "[blue]SKIP[/]", f"Duplicate CustomID ({part_custom_id})")
+                            self.ui.log(f"Row {part['row']}: Skipped duplicate CustomID '{part_custom_id}'", "SKIP")
+                            self.ui.update_eta(progress, task_id, start_time, i + 1, len(matched_parts))
+                            progress.update(task_id, advance=1)
+                            self._smart_delay(self.config.base_delay)
+                            continue
+
+                        # 2. Deduplizierung über Namen
                         part_norm = self.matcher._normalize(part['part'])
                         asm_norm = self.matcher._normalize(part['assembly'])
                         
@@ -167,9 +173,7 @@ class BOMAutomation:
                             ex_part = self.matcher._normalize(existing_data.get('part', ''))
                             ex_asm = self.matcher._normalize(existing_data.get('assembly', ''))
                             
-                            # Match if part name matches exactly
                             if ex_part == part_norm:
-                                # If assembly is also known, check it too
                                 if asm_norm and ex_asm and asm_norm != ex_asm:
                                     continue
                                 found_duplicate = True
@@ -193,7 +197,11 @@ class BOMAutomation:
                                 status_table.add_row(str(part['row']), part['part'], "[green]OK[/]", "Created")
                                 self.excel.mark_row_status(filepath, part['row'], "OK")
                                 self.ui.log(f"Row {part['row']}: Created '{part['part']}'", "OK")
+                                
+                                # Füge neue Einträge den Sets hinzu, um Duplikate im selben Durchlauf zu fangen
                                 existing[self.matcher.canonical_key(part['system'], part['assembly'], part['part'])] = part
+                                if part_custom_id:
+                                    existing_custom_ids.add(part_custom_id)
                             except Exception as e:
                                 status_table.add_row(str(part['row']), part['part'], "[red]ERR[/]", str(e))
                                 self.excel.mark_row_status(filepath, part['row'], "ERR")
