@@ -1,4 +1,4 @@
-# 🏎️ FSG CCBOM Automation
+# FSG BOM Automation
 
 > Automate the tedious process of manually entering parts into the [Formula Student Germany](https://www.formulastudent.de/) Bill of Material (BOM) tool — so you can focus on building fast cars.
 <div align="center">
